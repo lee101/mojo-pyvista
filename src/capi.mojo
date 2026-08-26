@@ -1,6 +1,7 @@
 """Polygon-mesh kernels exported through a C ABI."""
 
 from std.ffi import external_call
+from max.algorithm import parallelize
 from std.math import sqrt
 from std.sys.info import simd_width_of as simdwidthof
 
@@ -121,8 +122,7 @@ def warp_scalar(
             )
 
     if n >= PARALLEL_POINT_THRESHOLD:
-        for chunk in range((n + POINT_CHUNK_SIZE - 1) // POINT_CHUNK_SIZE):
-            work(chunk)
+        parallelize[work]((n + POINT_CHUNK_SIZE - 1) // POINT_CHUNK_SIZE)
     else:
         comptime W = simdwidthof[DType.float64]()
         var vector_end = n // W * W
@@ -174,8 +174,7 @@ def warp_vector(
             work_dst[i] = work_points[i] + factor * work_vectors[i]
 
     if n >= PARALLEL_POINT_THRESHOLD:
-        for chunk in range((n + POINT_CHUNK_SIZE - 1) // POINT_CHUNK_SIZE):
-            work(chunk)
+        parallelize[work]((n + POINT_CHUNK_SIZE - 1) // POINT_CHUNK_SIZE)
     else:
         comptime W = simdwidthof[DType.float64]()
         var vector_end = size // W * W
@@ -250,8 +249,7 @@ def elevation(
             work_dst[i] = range_low + t * output_scale
 
     if n >= PARALLEL_POINT_THRESHOLD:
-        for chunk in range((n + POINT_CHUNK_SIZE - 1) // POINT_CHUNK_SIZE):
-            work(chunk)
+        parallelize[work]((n + POINT_CHUNK_SIZE - 1) // POINT_CHUNK_SIZE)
     else:
         if denom == 0.0:
             comptime W = simdwidthof[DType.float64]()

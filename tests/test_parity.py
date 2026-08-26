@@ -229,6 +229,25 @@ def test_warp_by_vector_simd_tail():
     assert np.allclose(result.points, points + 0.125 * vectors)
 
 
+def test_warp_by_scalar_and_elevation_simd_tails():
+    points = np.arange(21, dtype=float).reshape(7, 3)
+    scalars = np.linspace(-2, 3, 7)
+    mesh = mpv.PolyData(points)
+    mesh.point_data["s"] = scalars
+    warped = mesh.warp_by_scalar("s", factor=0.25, normal=(0, 1, 0))
+    expected = points.copy()
+    expected[:, 1] += 0.25 * scalars
+    assert np.allclose(warped.points, expected)
+    assert np.allclose(
+        mesh.elevation(
+            low_point=(0, 0, 0),
+            high_point=(18, 0, 0),
+            scalar_range=(-1, 2),
+        )["Elevation"],
+        -1 + np.clip(points[:, 0] / 18, 0, 1) * 3,
+    )
+
+
 def test_elevation_defaults():
     points = np.array([[0, 0, -2], [0, 0, 1], [0, 0, 6]], dtype=float)
     faces = [3, 0, 1, 2]

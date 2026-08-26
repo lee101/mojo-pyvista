@@ -90,21 +90,23 @@ Python 3.13.14.
 
 | operation | Mojo | PyVista/VTK | PyVista / Mojo |
 |---|---:|---:|---:|
-| transform, 640k points | 22.69 ms | 49.41 ms | 2.18x |
-| warp_by_scalar, 640k points | 16.80 ms | 9.25 ms | 0.55x |
-| warp_by_vector, 640k points | 12.57 ms | 8.54 ms | 0.68x |
-| elevation, 640k points | 14.99 ms | 11.21 ms | 0.75x |
-| compute_normals, 250k quads | 28.09 ms | 119.16 ms | 4.24x |
-| triangulate, 250k quads | 7.48 ms | 60.38 ms | 8.07x |
-| compute_cell_sizes, 250k quads | 5.36 ms | 31.02 ms | 5.78x |
-| cell_data_to_point_data, 250k quads | 22.08 ms | 29.61 ms | 1.34x |
-| point_data_to_cell_data, 251k points | 6.21 ms | 11.89 ms | 1.91x |
+| transform, 640k points | 18.33 ms | 36.51 ms | 1.99x |
+| warp_by_scalar, 640k points | 1.45 ms | 8.69 ms | 5.98x |
+| warp_by_vector, 640k points | 0.90 ms | 9.04 ms | 10.07x |
+| elevation, 640k points | 0.68 ms | 10.02 ms | 14.82x |
+| compute_normals, 250k quads | 28.18 ms | 111.92 ms | 3.97x |
+| triangulate, 250k quads | 7.68 ms | 57.04 ms | 7.42x |
+| compute_cell_sizes, 250k quads | 7.74 ms | 28.66 ms | 3.70x |
+| cell_data_to_point_data, 250k quads | 18.86 ms | 23.49 ms | 1.25x |
+| point_data_to_cell_data, 251k points | 7.48 ms | 11.07 ms | 1.48x |
 
 Results depend on mesh shape, CPU, allocator, and PyVista/VTK build. Run
 `pixi run bench` on the target machine instead of treating these numbers as
 universal.
 
-No GPU path is included.
+No GPU path is included. The benchmark targets are streaming, memory-bound
+kernels with well under two floating-point operations per byte moved, so host
+to-device transfers would cost more than GPU execution could recover.
 
 ## How it works
 

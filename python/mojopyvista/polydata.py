@@ -275,10 +275,8 @@ class PolyData:
         if not self.n_points or not self.n_cells:
             raise ValueError("this filter requires at least one polygonal face")
 
-    def _validate_ffi_geometry(self, *, require_polygons: bool = False):
-        """Validate every invariant assumed by kernels receiving raw addresses."""
+    def _validate_ffi_points(self):
         points = self.points
-        faces = self.faces
         if (
             not isinstance(points, np.ndarray)
             or points.dtype != np.float64
@@ -287,6 +285,12 @@ class PolyData:
             or not points.flags.c_contiguous
         ):
             raise ValueError("points must be a C-contiguous float64 array with shape (n, 3)")
+
+    def _validate_ffi_geometry(self, *, require_polygons: bool = False):
+        """Validate every invariant assumed by kernels receiving raw addresses."""
+        self._validate_ffi_points()
+        points = self.points
+        faces = self.faces
         if (
             not isinstance(faces, np.ndarray)
             or faces.dtype != np.int64
@@ -501,7 +505,7 @@ class PolyData:
             values = self.get_array(scalars, preference="point")
             if scalars not in self.point_data:
                 raise ValueError("warp_by_scalar requires point data")
-        self._validate_ffi_geometry()
+        self._validate_ffi_points()
         values = self._kernel_array(values, self.n_points, "scalars").reshape(-1)
         if len(values) != self.n_points:
             raise ValueError("scalars must contain one value per point")
@@ -546,7 +550,7 @@ class PolyData:
             values = self.get_array(vectors, preference="point")
             if vectors not in self.point_data:
                 raise ValueError("warp_by_vector requires point data")
-        self._validate_ffi_geometry()
+        self._validate_ffi_points()
         values = self._kernel_array(values, self.n_points, "vectors")
         if values.shape != self.points.shape:
             raise ValueError("vectors must have shape (n_points, 3)")
@@ -568,7 +572,7 @@ class PolyData:
         progress_bar: bool = False,
     ):
         del progress_bar
-        self._validate_ffi_geometry()
+        self._validate_ffi_points()
         if not self.n_points:
             return self.copy()
         bounds = (
