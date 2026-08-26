@@ -1,6 +1,5 @@
 """Polygon-mesh kernels exported through a C ABI."""
 
-from std.algorithm import parallelize
 from std.ffi import external_call
 from std.math import sqrt
 from std.sys.info import simd_width_of as simdwidthof
@@ -122,7 +121,8 @@ def warp_scalar(
             )
 
     if n >= PARALLEL_POINT_THRESHOLD:
-        parallelize[work]((n + POINT_CHUNK_SIZE - 1) // POINT_CHUNK_SIZE)
+        for chunk in range((n + POINT_CHUNK_SIZE - 1) // POINT_CHUNK_SIZE):
+            work(chunk)
     else:
         comptime W = simdwidthof[DType.float64]()
         var vector_end = n // W * W
@@ -174,7 +174,8 @@ def warp_vector(
             work_dst[i] = work_points[i] + factor * work_vectors[i]
 
     if n >= PARALLEL_POINT_THRESHOLD:
-        parallelize[work]((n + POINT_CHUNK_SIZE - 1) // POINT_CHUNK_SIZE)
+        for chunk in range((n + POINT_CHUNK_SIZE - 1) // POINT_CHUNK_SIZE):
+            work(chunk)
     else:
         comptime W = simdwidthof[DType.float64]()
         var vector_end = size // W * W
@@ -249,7 +250,8 @@ def elevation(
             work_dst[i] = range_low + t * output_scale
 
     if n >= PARALLEL_POINT_THRESHOLD:
-        parallelize[work]((n + POINT_CHUNK_SIZE - 1) // POINT_CHUNK_SIZE)
+        for chunk in range((n + POINT_CHUNK_SIZE - 1) // POINT_CHUNK_SIZE):
+            work(chunk)
     else:
         if denom == 0.0:
             comptime W = simdwidthof[DType.float64]()
@@ -344,7 +346,8 @@ def cell_areas(
             )
 
         if ncells >= PARALLEL_CELL_THRESHOLD:
-            parallelize[work]((ncells + CELL_CHUNK_SIZE - 1) // CELL_CHUNK_SIZE)
+            for chunk in range((ncells + CELL_CHUNK_SIZE - 1) // CELL_CHUNK_SIZE):
+                work(chunk)
         else:
             cell_areas_range(points, faces, areas, 0, ncells, uniform_count)
         return
@@ -546,7 +549,10 @@ def cell_to_point(
                 )
 
     if npoints >= PARALLEL_POINT_THRESHOLD:
-        parallelize[work]((npoints + POINT_CHUNK_SIZE - 1) // POINT_CHUNK_SIZE)
+        for chunk in range(
+            (npoints + POINT_CHUNK_SIZE - 1) // POINT_CHUNK_SIZE
+        ):
+            work(chunk)
     else:
         comptime W = simdwidthof[DType.float64]()
         for point in range(npoints):
@@ -660,9 +666,10 @@ def point_to_cell(
 
     if uniform_count > 0:
         if ncells >= PARALLEL_CELL_THRESHOLD:
-            parallelize[uniform_work](
+            for chunk in range(
                 (ncells + CELL_CHUNK_SIZE - 1) // CELL_CHUNK_SIZE
-            )
+            ):
+                uniform_work(chunk)
         else:
             comptime W = simdwidthof[DType.float64]()
             for cell in range(ncells):
