@@ -1,13 +1,11 @@
 """Polygon-mesh kernels exported through a C ABI."""
 
 from std.ffi import external_call
-from max.algorithm import parallelize
 from std.math import sqrt
 from std.sys.info import simd_width_of as simdwidthof
 
 comptime FPtr = UnsafePointer[Float64, AnyOrigin[mut=True]]
 comptime IPtr = UnsafePointer[Int64, AnyOrigin[mut=True]]
-comptime PARALLEL_POINT_THRESHOLD = 100_000
 comptime PARALLEL_CELL_THRESHOLD = 32_768
 comptime POINT_CHUNK_SIZE = 16_384
 comptime CELL_CHUNK_SIZE = 4_096
@@ -92,54 +90,22 @@ def warp_scalar(
     var normals = fp(normals_addr)
     var dst = fp(dst_addr)
 
-    @parameter
-    def work(chunk: Int):
-        comptime W = simdwidthof[DType.float64]()
-        var work_points = fp(points_addr)
-        var work_scalars = fp(scalars_addr)
-        var work_normals = fp(normals_addr)
-        var work_dst = fp(dst_addr)
-        var start = chunk * POINT_CHUNK_SIZE
-        var end = min(start + POINT_CHUNK_SIZE, n)
-        var vector_end = start + (end - start) // W * W
-        for i in range(start, vector_end, W):
-            var amounts = factor * work_scalars.load[width=W](i)
-            for coord in range(3):
-                var base = i * 3 + coord
-                (work_dst + base).strided_store[width=W](
-                    (work_points + base).strided_load[width=W](3)
-                    + amounts * (work_normals + base).strided_load[width=W](3),
-                    3,
-                )
-        for i in range(vector_end, end):
-            var amount = factor * work_scalars[i]
-            work_dst[i * 3] = work_points[i * 3] + amount * work_normals[i * 3]
-            work_dst[i * 3 + 1] = (
-                work_points[i * 3 + 1] + amount * work_normals[i * 3 + 1]
+    comptime W = simdwidthof[DType.float64]()
+    var vector_end = n // W * W
+    for i in range(0, vector_end, W):
+        var amounts = factor * scalars.load[width=W](i)
+        for coord in range(3):
+            var base = i * 3 + coord
+            (dst + base).strided_store[width=W](
+                (points + base).strided_load[width=W](3)
+                + amounts * (normals + base).strided_load[width=W](3),
+                3,
             )
-            work_dst[i * 3 + 2] = (
-                work_points[i * 3 + 2] + amount * work_normals[i * 3 + 2]
-            )
-
-    if n >= PARALLEL_POINT_THRESHOLD:
-        parallelize[work]((n + POINT_CHUNK_SIZE - 1) // POINT_CHUNK_SIZE)
-    else:
-        comptime W = simdwidthof[DType.float64]()
-        var vector_end = n // W * W
-        for i in range(0, vector_end, W):
-            var amounts = factor * scalars.load[width=W](i)
-            for coord in range(3):
-                var base = i * 3 + coord
-                (dst + base).strided_store[width=W](
-                    (points + base).strided_load[width=W](3)
-                    + amounts * (normals + base).strided_load[width=W](3),
-                    3,
-                )
-        for i in range(vector_end, n):
-            var amount = factor * scalars[i]
-            dst[i * 3] = points[i * 3] + amount * normals[i * 3]
-            dst[i * 3 + 1] = points[i * 3 + 1] + amount * normals[i * 3 + 1]
-            dst[i * 3 + 2] = points[i * 3 + 2] + amount * normals[i * 3 + 2]
+    for i in range(vector_end, n):
+        var amount = factor * scalars[i]
+        dst[i * 3] = points[i * 3] + amount * normals[i * 3]
+        dst[i * 3 + 1] = points[i * 3 + 1] + amount * normals[i * 3 + 1]
+        dst[i * 3 + 2] = points[i * 3 + 2] + amount * normals[i * 3 + 2]
 
 
 @export("mpv_warp_vector")
@@ -155,36 +121,15 @@ def warp_vector(
     var dst = fp(dst_addr)
     var size = n * 3
 
-    @parameter
-    def work(chunk: Int):
-        comptime W = simdwidthof[DType.float64]()
-        var work_points = fp(points_addr)
-        var work_vectors = fp(vectors_addr)
-        var work_dst = fp(dst_addr)
-        var start = chunk * POINT_CHUNK_SIZE * 3
-        var end = min(start + POINT_CHUNK_SIZE * 3, size)
-        var vector_end = start + (end - start) // W * W
-        for i in range(start, vector_end, W):
-            work_dst.store(
-                i,
-                work_points.load[width=W](i)
-                + factor * work_vectors.load[width=W](i),
-            )
-        for i in range(vector_end, end):
-            work_dst[i] = work_points[i] + factor * work_vectors[i]
-
-    if n >= PARALLEL_POINT_THRESHOLD:
-        parallelize[work]((n + POINT_CHUNK_SIZE - 1) // POINT_CHUNK_SIZE)
-    else:
-        comptime W = simdwidthof[DType.float64]()
-        var vector_end = size // W * W
-        for i in range(0, vector_end, W):
-            dst.store(
-                i,
-                points.load[width=W](i) + factor * vectors.load[width=W](i),
-            )
-        for i in range(vector_end, size):
-            dst[i] = points[i] + factor * vectors[i]
+    comptime W = simdwidthof[DType.float64]()
+    var vector_end = size // W * W
+    for i in range(0, vector_end, W):
+        dst.store(
+            i,
+            points.load[width=W](i) + factor * vectors.load[width=W](i),
+        )
+    for i in range(vector_end, size):
+        dst[i] = points[i] + factor * vectors[i]
 
 
 @export("mpv_elevation")
@@ -209,78 +154,36 @@ def elevation(
     var denom = dx * dx + dy * dy + dz * dz
     var output_scale = range_high - range_low
 
-    @parameter
-    def work(chunk: Int):
-        var work_points = fp(points_addr)
-        var work_dst = fp(dst_addr)
-        var start = chunk * POINT_CHUNK_SIZE
-        var end = min(start + POINT_CHUNK_SIZE, n)
-        if denom == 0.0:
-            comptime W = simdwidthof[DType.float64]()
-            var vector_end = start + (end - start) // W * W
-            for i in range(start, vector_end, W):
-                work_dst.store(i, SIMD[DType.float64, W](range_low))
-            for i in range(vector_end, end):
-                work_dst[i] = range_low
-            return
+    if denom == 0.0:
         comptime W = simdwidthof[DType.float64]()
-        var inv_denom = 1.0 / denom
-        var vector_end = start + (end - start) // W * W
-        for i in range(start, vector_end, W):
-            var t = (
-                ((work_points + i * 3).strided_load[width=W](3) - low_x) * dx
-                + ((work_points + i * 3 + 1).strided_load[width=W](3) - low_y)
-                * dy
-                + ((work_points + i * 3 + 2).strided_load[width=W](3) - low_z)
-                * dz
-            ) * inv_denom
-            t = min(
-                max(t, SIMD[DType.float64, W](0.0)),
-                SIMD[DType.float64, W](1.0),
-            )
-            work_dst.store(i, range_low + t * output_scale)
-        for i in range(vector_end, end):
-            var t = (
-                (work_points[i * 3] - low_x) * dx
-                + (work_points[i * 3 + 1] - low_y) * dy
-                + (work_points[i * 3 + 2] - low_z) * dz
-            ) * inv_denom
-            t = min(max(t, 0.0), 1.0)
-            work_dst[i] = range_low + t * output_scale
-
-    if n >= PARALLEL_POINT_THRESHOLD:
-        parallelize[work]((n + POINT_CHUNK_SIZE - 1) // POINT_CHUNK_SIZE)
-    else:
-        if denom == 0.0:
-            comptime W = simdwidthof[DType.float64]()
-            var vector_end = n // W * W
-            for i in range(0, vector_end, W):
-                dst.store(i, SIMD[DType.float64, W](range_low))
-            for i in range(vector_end, n):
-                dst[i] = range_low
-            return
-        comptime W = simdwidthof[DType.float64]()
-        var inv_denom = 1.0 / denom
         var vector_end = n // W * W
         for i in range(0, vector_end, W):
-            var t = (
-                ((points + i * 3).strided_load[width=W](3) - low_x) * dx
-                + ((points + i * 3 + 1).strided_load[width=W](3) - low_y) * dy
-                + ((points + i * 3 + 2).strided_load[width=W](3) - low_z) * dz
-            ) * inv_denom
-            t = min(
-                max(t, SIMD[DType.float64, W](0.0)),
-                SIMD[DType.float64, W](1.0),
-            )
-            dst.store(i, range_low + t * output_scale)
+            dst.store(i, SIMD[DType.float64, W](range_low))
         for i in range(vector_end, n):
-            var t = (
-                (points[i * 3] - low_x) * dx
-                + (points[i * 3 + 1] - low_y) * dy
-                + (points[i * 3 + 2] - low_z) * dz
-            ) * inv_denom
-            t = min(max(t, 0.0), 1.0)
-            dst[i] = range_low + t * output_scale
+            dst[i] = range_low
+        return
+    comptime W = simdwidthof[DType.float64]()
+    var inv_denom = 1.0 / denom
+    var vector_end = n // W * W
+    for i in range(0, vector_end, W):
+        var t = (
+            ((points + i * 3).strided_load[width=W](3) - low_x) * dx
+            + ((points + i * 3 + 1).strided_load[width=W](3) - low_y) * dy
+            + ((points + i * 3 + 2).strided_load[width=W](3) - low_z) * dz
+        ) * inv_denom
+        t = min(
+            max(t, SIMD[DType.float64, W](0.0)),
+            SIMD[DType.float64, W](1.0),
+        )
+        dst.store(i, range_low + t * output_scale)
+    for i in range(vector_end, n):
+        var t = (
+            (points[i * 3] - low_x) * dx
+            + (points[i * 3 + 1] - low_y) * dy
+            + (points[i * 3 + 2] - low_z) * dz
+        ) * inv_denom
+        t = min(max(t, 0.0), 1.0)
+        dst[i] = range_low + t * output_scale
 
 
 def cell_areas_range(
@@ -509,75 +412,32 @@ def cell_to_point(
     var src = fp(src_addr)
     var dst = fp(dst_addr)
 
-    @parameter
-    def work(chunk: Int):
-        comptime W = simdwidthof[DType.float64]()
-        var work_offsets = ip(point_offsets_addr)
-        var work_cells = ip(incident_cells_addr)
-        var work_src = fp(src_addr)
-        var work_dst = fp(dst_addr)
-        var start = chunk * POINT_CHUNK_SIZE
-        var end = min(start + POINT_CHUNK_SIZE, npoints)
-        for point in range(start, end):
-            var begin = Int(work_offsets[point])
-            var incident_end = Int(work_offsets[point + 1])
-            var count = incident_end - begin
-            var comp = 0
-            if count > 0:
-                for vector_comp in range(0, ncomp // W * W, W):
-                    var cell = Int(work_cells[begin])
-                    var acc = work_src.load[width=W](cell * ncomp + vector_comp)
-                    for incident in range(begin + 1, incident_end):
-                        cell = Int(work_cells[incident])
-                        acc += work_src.load[width=W](
-                            cell * ncomp + vector_comp
-                        )
-                    work_dst.store(
-                        point * ncomp + vector_comp,
-                        acc / Float64(count),
-                    )
-                    comp += W
-            for scalar_comp in range(comp, ncomp):
-                var acc = 0.0
-                for incident in range(begin, incident_end):
-                    var cell = Int(work_cells[incident])
-                    acc += work_src[cell * ncomp + scalar_comp]
-                work_dst[point * ncomp + scalar_comp] = (
-                    acc / Float64(count) if count > 0 else 0.0
+    comptime W = simdwidthof[DType.float64]()
+    for point in range(npoints):
+        var begin = Int(point_offsets[point])
+        var incident_end = Int(point_offsets[point + 1])
+        var count = incident_end - begin
+        var comp = 0
+        if count > 0:
+            for vector_comp in range(0, ncomp // W * W, W):
+                var cell = Int(incident_cells[begin])
+                var acc = src.load[width=W](cell * ncomp + vector_comp)
+                for incident in range(begin + 1, incident_end):
+                    cell = Int(incident_cells[incident])
+                    acc += src.load[width=W](cell * ncomp + vector_comp)
+                dst.store(
+                    point * ncomp + vector_comp,
+                    acc / Float64(count),
                 )
-
-    if npoints >= PARALLEL_POINT_THRESHOLD:
-        for chunk in range(
-            (npoints + POINT_CHUNK_SIZE - 1) // POINT_CHUNK_SIZE
-        ):
-            work(chunk)
-    else:
-        comptime W = simdwidthof[DType.float64]()
-        for point in range(npoints):
-            var begin = Int(point_offsets[point])
-            var incident_end = Int(point_offsets[point + 1])
-            var count = incident_end - begin
-            var comp = 0
-            if count > 0:
-                for vector_comp in range(0, ncomp // W * W, W):
-                    var cell = Int(incident_cells[begin])
-                    var acc = src.load[width=W](cell * ncomp + vector_comp)
-                    for incident in range(begin + 1, incident_end):
-                        cell = Int(incident_cells[incident])
-                        acc += src.load[width=W](cell * ncomp + vector_comp)
-                    dst.store(
-                        point * ncomp + vector_comp,
-                        acc / Float64(count),
-                    )
-                    comp += W
-            for scalar_comp in range(comp, ncomp):
-                var acc = 0.0
-                for incident in range(begin, incident_end):
-                    var cell = Int(incident_cells[incident])
-                    acc += src[cell * ncomp + scalar_comp]
-                dst[point * ncomp + scalar_comp] = (
-                    acc / Float64(count) if count > 0 else 0.0
-                )
+                comp += W
+        for scalar_comp in range(comp, ncomp):
+            var acc = 0.0
+            for incident in range(begin, incident_end):
+                var cell = Int(incident_cells[incident])
+                acc += src[cell * ncomp + scalar_comp]
+            dst[point * ncomp + scalar_comp] = (
+                acc / Float64(count) if count > 0 else 0.0
+            )
 
 
 @export("mpv_build_point_adjacency")
